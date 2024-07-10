@@ -15,7 +15,7 @@ Every frame will have the following structure:
 |N|     |             |   (if payload len == 126/127) |
 |-----------------------------------------------------|
 |    extended payload length if payload len == 127    |
-|                                                     |
+|-----------------------------------------------------|
 |                   Payload Data...                   |
 ```
 

@@ -1,6 +1,5 @@
 use std::io;
 use wtransport::{Connection, Endpoint, ServerConfig};
-
 pub struct Server {
 	endpoint: Endpoint<wtransport::endpoint::endpoint_side::Server>,
 }

@@ -1,5 +1,5 @@
-pub mod claude;
 pub mod eventful;
+pub mod claude;
 
 pub use wtransport::ServerConfig;
 use wtransport::{Connection, Endpoint};
@@ -43,10 +43,6 @@ impl Server {
 	) -> Result<TransportConnection, wtransport::error::ConnectionError> {
 		let connection =
 			self.endpoint_server.accept().await.await?.accept().await?;
-
-		// f(connection);
-		// connection.open_bi();
-		// connection.accept_bi();
 		Ok(TransportConnection { connection })
 	}
 }

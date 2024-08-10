@@ -67,6 +67,7 @@ impl<U, B> TransportConnection<U, B> {
 		F: Future<Output = ()> + Send + 'static,
 	{
 		if self.on_bi_connection.is_some() {
+            // FIXME: should not panic!
 			panic!("already had a bi_connection handler, cannot override")
 		}
 		self.on_bi_connection = Some(f);
@@ -88,6 +89,7 @@ impl<U, B> TransportConnection<U, B> {
 		F: Future<Output = ()> + Send + 'static,
 	{
 		if self.on_uni_connection.is_some() {
+            // FIXME: should not panic!
 			panic!("already had a uni_connection handler, cannot override")
 		}
 		self.on_uni_connection = Some(f);

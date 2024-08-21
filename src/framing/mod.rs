@@ -1,6 +1,6 @@
 use std::{error::Error, future::Future, ops::Deref};
 
-use wtransport::{RecvStream, SendStream};
+use wtransport::{stream::BiStream, RecvStream, SendStream};
 
 // TODO: make two submodules, use two approaches:
 // - implement trait to take asynchronous callback and stream, and call the calback for each frame
@@ -30,17 +30,15 @@ pub trait FrameWriter {
 	) -> impl Future<Output = Result<(), Box<dyn Error>>> + Send;
 }
 
-pub trait MessageReader<const MAX_MESSAGE_SIZE_BYTES: usize = 1048576> {
+pub trait MessageReader<const MAX_MESSAGE_SIZE_BYTES: usize = 65535> {
 	fn read_message(
 		&mut self,
-		buffer: impl AsRef<[u8]> + Send,
 	) -> impl Future<Output = Result<(), Box<dyn Error>>> + Send;
 }
 
-pub trait MessageWriter {
-	fn write_frame(
+pub trait MessageWriter<const MAX_MESSAGE_SIZE_BYTES: usize = 65535> {
+	fn write_message(
 		&mut self,
-		buffer: impl AsRef<[u8]> + Send,
 	) -> impl Future<Output = Result<(), Box<dyn Error>>> + Send;
 }
 
@@ -75,7 +73,38 @@ impl FrameWriter for SendStream {
 		&mut self,
 		buffer: impl AsRef<[u8]>,
 	) -> Result<(), Box<dyn Error>> {
-		self.write_all(buffer.as_ref()).await?;
-		return Ok(());
+		let buffer = buffer.as_ref();
+		let payload_length = buffer.len();
+
+		// THIS IS ALL WRONG! idk it might be wrong but lgtm
+		let (extra_bytes, payload_length_length): (u8, u8) =
+			match payload_length {
+				..126 => (0, payload_length as u8),
+				126..65536 => (16, 126),
+				65536.. => (64, 127),
+			};
+
+		let mut payload = Vec::with_capacity(
+			1 /* header */ + extra_bytes as usize /* extended payload length */ + payload_length,
+		);
+
+		payload.push(128u8 | payload_length_length);
+		payload.extend_from_slice(buffer);
+
+		self.write_all(buffer).await?;
+		Ok(())
+	}
+}
+
+impl MessageReader for RecvStream {
+	async fn read_message(&mut self) -> Result<(), Box<dyn Error>> {
+		loop {
+			let frame = self.read_frame().await?;
+			if frame.header.is_final {
+				break;
+			}
+		}
+
+		todo!()
 	}
 }

@@ -18,7 +18,7 @@ impl<T> Server<T> {
 		})
 	}
 
-	pub async fn on_connection<U, B>(self: &mut Self, f: T)
+	pub async fn on_connection<U, B>(&mut self, f: T)
 	where
 		T: Fn(TransportConnection<U, B>),
 	{

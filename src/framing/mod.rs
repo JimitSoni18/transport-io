@@ -1,6 +1,6 @@
-use std::{error::Error, future::Future, ops::Deref};
+use std::{error::Error, future::Future};
 
-use wtransport::{stream::BiStream, RecvStream, SendStream};
+use wtransport::{RecvStream, SendStream};
 
 // TODO: make two submodules, use two approaches:
 // - implement trait to take asynchronous callback and stream, and call the calback for each frame
@@ -15,6 +15,23 @@ pub struct FrameHeader {
 pub struct Frame {
 	header: FrameHeader,
 	content: Box<[u8]>,
+}
+
+impl Frame {
+	#[inline]
+	pub fn header(&self) -> &FrameHeader {
+		&self.header
+	}
+    pub fn get_content(self) -> Box<[u8]> {
+        self.content
+    }
+}
+
+impl FrameHeader {
+	#[inline]
+	pub fn is_final(&self) -> bool {
+		self.is_final
+	}
 }
 
 pub trait FrameReader {
@@ -33,7 +50,7 @@ pub trait FrameWriter {
 pub trait MessageReader<const MAX_MESSAGE_SIZE_BYTES: usize = 65535> {
 	fn read_message(
 		&mut self,
-	) -> impl Future<Output = Result<(), Box<dyn Error>>> + Send;
+	) -> impl Future<Output = Result<Vec<u8>, Box<dyn Error>>> + Send;
 }
 
 pub trait MessageWriter<const MAX_MESSAGE_SIZE_BYTES: usize = 65535> {
@@ -79,32 +96,45 @@ impl FrameWriter for SendStream {
 		// THIS IS ALL WRONG! idk it might be wrong but lgtm
 		let (extra_bytes, payload_length_length): (u8, u8) =
 			match payload_length {
-				..126 => (0, payload_length as u8),
-				126..65536 => (16, 126),
-				65536.. => (64, 127),
+				0..=125 => (0, payload_length as u8),
+				126..=65535 => (2, 126),
+				_ => (8, 127),
 			};
 
-		let mut payload = Vec::with_capacity(
-			1 /* header */ + extra_bytes as usize /* extended payload length */ + payload_length,
-		);
-
-		payload.push(128u8 | payload_length_length);
-		payload.extend_from_slice(buffer);
-
+		self.write_all(&[128u8 /* or 0b1000_0000 */ | payload_length_length])
+			.await?;
+		if extra_bytes == 2 {
+			self.write_all(&(payload_length as u16).to_be_bytes())
+				.await?;
+		}
+		if extra_bytes == 8 {
+			self.write_all(&payload_length.to_be_bytes()).await?;
+		}
 		self.write_all(buffer).await?;
 		Ok(())
 	}
 }
 
 impl MessageReader for RecvStream {
-	async fn read_message(&mut self) -> Result<(), Box<dyn Error>> {
+    // FIXME: this implementation can be much much faster if we directly parse from stream instead
+    // of making frames and repeatedly copying all data from here to there.
+	async fn read_message(&mut self) -> Result<Vec<u8>, Box<dyn Error>> {
+        let mut message = Vec::new();
 		loop {
 			let frame = self.read_frame().await?;
-			if frame.header.is_final {
-				break;
+            let is_final = frame.header().is_final();
+            message.extend_from_slice(&frame.get_content());
+			if is_final {
+                return Ok(message)
 			}
 		}
-
-		todo!()
 	}
+}
+
+impl MessageWriter for SendStream {
+    async fn write_message(
+		&mut self,
+	) -> Result<(), Box<dyn Error>> {
+        todo!()
+    }
 }

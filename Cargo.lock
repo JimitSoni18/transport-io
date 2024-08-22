@@ -947,6 +947,7 @@ dependencies = [
 name = "transport-io"
 version = "0.1.0"
 dependencies = [
+ "thiserror",
  "tokio",
  "wtransport",
 ]

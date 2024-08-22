@@ -22,9 +22,9 @@ impl Frame {
 	pub fn header(&self) -> &FrameHeader {
 		&self.header
 	}
-    pub fn get_content(self) -> Box<[u8]> {
-        self.content
-    }
+	pub fn get_content(self) -> Box<[u8]> {
+		self.content
+	}
 }
 
 impl FrameHeader {
@@ -37,7 +37,9 @@ impl FrameHeader {
 pub trait FrameReader {
 	fn read_frame(
 		&mut self,
-	) -> impl Future<Output = Result<Frame, Box<dyn Error>>> + Send;
+	) -> impl Future<
+		Output = Result<Frame, wtransport::error::StreamReadExactError>,
+	> + Send;
 }
 
 pub trait FrameWriter {
@@ -47,21 +49,26 @@ pub trait FrameWriter {
 	) -> impl Future<Output = Result<(), Box<dyn Error>>> + Send;
 }
 
-pub trait MessageReader<const MAX_MESSAGE_SIZE_BYTES: usize = 65535> {
+pub trait MessageReader {
+	const MAX_MESSAGE_SIZE_BYTES: usize = 65535;
 	fn read_message(
 		&mut self,
-	) -> impl Future<Output = Result<Vec<u8>, Box<dyn Error>>> + Send;
+	) -> impl Future<Output = Result<Vec<u8>, MessageReadError>> + Send;
 }
 
-pub trait MessageWriter<const MAX_MESSAGE_SIZE_BYTES: usize = 65535> {
+pub trait MessageWriter {
+	const MAX_CHUNK_SIZE_BYTES: usize = 1024;
 	fn write_message(
 		&mut self,
+		buffer: impl AsRef<[u8]> + Send,
 	) -> impl Future<Output = Result<(), Box<dyn Error>>> + Send;
 }
 
 impl FrameReader for RecvStream {
 	#[inline]
-	async fn read_frame(&mut self) -> Result<Frame, Box<dyn Error>> {
+	async fn read_frame(
+		&mut self,
+	) -> Result<Frame, wtransport::error::StreamReadExactError> {
 		let mut header_bytes = [0];
 		self.read_exact(&mut header_bytes).await?;
 
@@ -71,15 +78,28 @@ impl FrameReader for RecvStream {
 			payload_length_bytes: header_bytes[0] - 128,
 		};
 
-		let len: usize = match header.payload_length_bytes {
-			126 => 8 * 2,
-			127 => 8 * 8,
-			len => 8 * len as usize,
+		let extended_payload_length_bytes: u8 = match header.payload_length_bytes {
+			126 => 2,
+			127 => 8,
+			_ => 0,
 		};
 
-		let mut content = vec![0; len].into_boxed_slice();
+		let payload_length = if extended_payload_length_bytes == 0 {
+			header.payload_length_bytes
+		} else {
+			extended_payload_length_bytes
+		};
 
-		self.read_exact(&mut content).await?;
+		let mut content_length = vec![0; payload_length as usize];
+
+		self.read_exact(&mut content_length).await?;
+
+        // THIS IS WRONG! DEFINITELY!
+		let mut content =
+			vec![0; usize::from_be_bytes(content_length.try_into().unwrap())]
+				.into_boxed_slice();
+
+		self.read_exact(&mut content);
 
 		Ok(Frame { content, header })
 	}
@@ -115,26 +135,47 @@ impl FrameWriter for SendStream {
 	}
 }
 
+#[derive(Debug, thiserror::Error)]
+pub enum MessageReadError {
+	#[error(transparent)]
+	TransportError(wtransport::error::StreamReadExactError),
+	#[error("message size exceeded max message size limit")]
+	MessageSizeExceeded,
+}
+
+impl From<wtransport::error::StreamReadExactError> for MessageReadError {
+	fn from(value: wtransport::error::StreamReadExactError) -> Self {
+		Self::TransportError(value)
+	}
+}
+
 impl MessageReader for RecvStream {
-    // FIXME: this implementation can be much much faster if we directly parse from stream instead
-    // of making frames and repeatedly copying all data from here to there.
-	async fn read_message(&mut self) -> Result<Vec<u8>, Box<dyn Error>> {
-        let mut message = Vec::new();
+	// FIXME: this implementation can be much much faster if we directly parse from stream instead
+	// of making frames and repeatedly copying all data from here to there.
+	async fn read_message(&mut self) -> Result<Vec<u8>, MessageReadError> {
+		let mut message = Vec::new();
+		let mut current_len = 0;
 		loop {
 			let frame = self.read_frame().await?;
-            let is_final = frame.header().is_final();
-            message.extend_from_slice(&frame.get_content());
+			let is_final = frame.header().is_final();
+			let content = frame.get_content();
+			current_len += frame.header().payload_length_bytes;
+			if current_len > Self::MAX_MESSAGE_SIZE_BYTES {
+				return Err(MessageReadError::MessageSizeExceeded);
+			}
+			message.extend_from_slice(&content);
 			if is_final {
-                return Ok(message)
+				return Ok(message);
 			}
 		}
 	}
 }
 
 impl MessageWriter for SendStream {
-    async fn write_message(
+	async fn write_message(
 		&mut self,
+		buffer: impl AsRef<[u8]>,
 	) -> Result<(), Box<dyn Error>> {
-        todo!()
-    }
+		todo!()
+	}
 }

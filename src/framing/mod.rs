@@ -241,7 +241,7 @@ mod tests {
 				let fx_msg = String::from("Hi, this is sample text");
 
 				let mut server = Server::new(config).unwrap();
-				server.on_connection(|mut connection| {
+				server.on_connection(|connection| {
 					connection.on_bi_connection(handle_bi_cnxn).await.unwrap();
 				});
 
@@ -289,6 +289,9 @@ mod tests {
 				});
 			});
 	}
+
+    async fn handle_connection() {
+    }
 
 	async fn handle_bi_cnxn(bi_stream: BiStream) {
 		let (mut send, _) = bi_stream.split();

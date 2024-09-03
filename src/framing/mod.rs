@@ -216,55 +216,42 @@ mod tests {
 	use super::{MessageReader, MessageWriter};
 	use wtransport::{ClientConfig, Endpoint, Identity, ServerConfig};
 
-	#[test]
-	fn test_read_and_write() {
+	#[tokio::test]
+	async fn test_read_and_write() {
 		let fx_msg = String::from("Hi, this is sample text");
 
-		tokio::runtime::Builder::new_multi_thread()
-			.enable_all()
-			.build()
-			.unwrap()
-			.block_on(async {
-				let client_join = async {
-					let config = ServerConfig::builder()
-						.with_bind_default(4433)
-						.with_identity(
-							&Identity::load_pemfiles(
-								"certs/full-chain.cert.pem",
-								"certs/localhost.key.pem",
-							)
-							.await
-							.unwrap(),
-						)
-						.build();
+		let client_join = async {
+			let config = ServerConfig::builder()
+				.with_bind_default(4433)
+				.with_identity(
+					&Identity::load_pemfiles(
+						"certs/full-chain.cert.pem",
+						"certs/localhost.key.pem",
+					)
+					.await
+					.unwrap(),
+				)
+				.build();
 
-					let server = Endpoint::server(config).unwrap();
+			let server = Endpoint::server(config).unwrap();
 
-					let connection = server
-						.accept()
-						.await
-						.await
-						.unwrap()
-						.accept()
-						.await
-						.unwrap();
-					let (mut send, _) = connection.accept_bi().await.unwrap();
-					send.write_message(fx_msg).await.unwrap();
-				};
+			let connection =
+				server.accept().await.await.unwrap().accept().await.unwrap();
+			let (mut send, _) = connection.accept_bi().await.unwrap();
+			send.write_message(fx_msg).await.unwrap();
+		};
 
-				let server_join = async {
-					let client =
-						Endpoint::client(ClientConfig::default()).unwrap();
-					let connection =
-						client.connect("https://localhost:4433").await.unwrap();
-					let (_, mut recv) =
-						connection.open_bi().await.unwrap().await.unwrap();
-					let msg = recv.read_message().await.unwrap();
-					let s = std::str::from_utf8(&msg).unwrap();
-					println!("msg: {s}");
-				};
+		let server_join = async {
+			let client = Endpoint::client(ClientConfig::default()).unwrap();
+			let connection =
+				client.connect("https://localhost:4433").await.unwrap();
+			let (_, mut recv) =
+				connection.open_bi().await.unwrap().await.unwrap();
+			let msg = recv.read_message().await.unwrap();
+			let s = std::str::from_utf8(&msg).unwrap();
+			println!("msg: {s}");
+		};
 
-				tokio::join!(client_join, server_join);
-			})
+		tokio::join!(client_join, server_join);
 	}
 }

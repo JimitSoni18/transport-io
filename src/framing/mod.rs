@@ -214,11 +214,7 @@ impl MessageWriter for SendStream {
 #[cfg(test)]
 mod tests {
 	use super::{MessageReader, MessageWriter};
-	use crate::eventful::{Server, TransportConnection};
-	use wtransport::{
-		stream::BiStream, ClientConfig, Endpoint, Identity, RecvStream,
-		ServerConfig,
-	};
+	use wtransport::{ClientConfig, Endpoint, Identity, ServerConfig};
 
 	#[test]
 	fn test_read_and_write() {
@@ -227,31 +223,14 @@ mod tests {
 			.build()
 			.unwrap()
 			.block_on(async {
-				let config = ServerConfig::builder()
-					.with_bind_default(4433)
-					.with_identity(
-						&Identity::load_pemfiles(
-							"certs/cert.pem",
-							"certs/key.pem",
-						)
-						.await
-						.unwrap(),
-					)
-					.build();
-				let fx_msg = String::from("Hi, this is sample text");
-
-				let mut server = Server::new(config).unwrap();
-				server.on_connection(|connection| {
-					connection.on_bi_connection(handle_bi_cnxn).await.unwrap();
-				});
-
-				tokio::spawn(async {
+				let fx_msg = "fixture message here!";
+				let server_join_handle = tokio::spawn(async move {
 					let config = ServerConfig::builder()
 						.with_bind_default(4433)
 						.with_identity(
 							&Identity::load_pemfiles(
-								"certs/cert.pem",
-								"certs/key.pem",
+								env!("SSL_CERTIFICATE_PATH"),
+								env!("SSL_KEY_PATH"),
 							)
 							.await
 							.unwrap(),
@@ -272,30 +251,23 @@ mod tests {
 					send.write_message(fx_msg).await.unwrap();
 				});
 
-				tokio::spawn(async {
+				let client_join_handle = tokio::spawn(async move {
 					let client =
 						Endpoint::client(ClientConfig::default()).unwrap();
 					let connection =
 						client.connect("https://localhost:4433").await.unwrap();
-					loop {
-						let (_, mut recv) =
-							connection.open_bi().await.unwrap().await.unwrap();
-						let mut s = String::new();
-						s += std::str::from_utf8(
-							&recv.read_message().await.unwrap(),
-						)
-						.unwrap();
-					}
+					let (_, mut recv) =
+						connection.open_bi().await.unwrap().await.unwrap();
+					let msg = recv.read_message().await.unwrap();
+					let s = std::str::from_utf8(&msg).unwrap();
+					assert_eq!(s, fx_msg);
 				});
-			});
-	}
 
-    async fn handle_connection() {
-    }
+				let (client_result, server_result) =
+					tokio::join!(server_join_handle, client_join_handle);
 
-	async fn handle_bi_cnxn(bi_stream: BiStream) {
-		let (mut send, _) = bi_stream.split();
-		let fx_msg = String::from("Hi, this is sample text");
-		send.write_message(fx_msg).await.unwrap();
+				assert!(client_result.is_ok());
+				assert!(server_result.is_ok());
+			})
 	}
 }
